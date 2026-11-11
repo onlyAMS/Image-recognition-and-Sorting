@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+
+# Environment variables
+.env
+
+# Datasets
+data/raw/
+
+# Model files
+*.h5
+*.pth
+*.pt
