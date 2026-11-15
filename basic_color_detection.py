@@ -1,57 +1,149 @@
 import cv2
 import numpy as np
+import serial
+import time
+
+
+# ---------------- TIMER ----------------
+
+class Timer:
+    def __init__(self, interval):
+        self.interval = interval
+        self.last_time = time.perf_counter()
+
+    def check(self):
+        current_time = time.perf_counter()
+
+        if current_time - self.last_time >= self.interval:
+            self.last_time = current_time
+            return True
+
+        return False
+    def reset(self):
+        self.last_time = time.perf_counter()
+
+
+# ---------------- INITIALIZATION ----------------
+
+arduino = serial.Serial('COM5', 9600, timeout=0)
+
+time.sleep(2)
+
+detection_timer = Timer(0.15)
+
+cooldown_timer = Timer(2)
 
 cap = cv2.VideoCapture(0)
 
-
-def check_color(h, s, v):
-    if 35 <= h <= 85 and s >= 70 and 40 <= v <= 255:
-        return 'Green'
-
-    elif (h <= 10 or h >= 170) and s >= 100 and v >= 100:
-        return 'Red'
-
-    elif 100 <= h <= 130 and s >= 100 and v >= 100:
-        return 'Blue'
-
-    else:
-        return 'Color not chosen'
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 
-# Define HSV ranges
+# ---------------- COLOR CONFIGURATION ----------------
+
 colors = {
-    "Green": ([35, 70, 40], [85, 255, 255]),
-    "Red1": ([0, 100, 100], [10, 255, 255]),
-    "Red2": ([170, 100, 100], [179, 255, 255]),
-    "Blue": ([100, 100, 100], [130, 255, 255])
+
+    "green": {
+        "lower": np.array([35, 70, 40]),
+        "upper": np.array([85, 255, 255]),
+        "draw_color": (0, 255, 0)
+    },
+
+    "red": {
+        "lower": np.array([0, 100, 100]),
+        "upper": np.array([10, 255, 255]),
+        "draw_color": (0, 0, 255)
+    },
+
+    "red2": {
+        "lower": np.array([170, 100, 100]),
+        "upper": np.array([179, 255, 255]),
+        "draw_color": (0, 0, 255)
+    },
+
+    "blue": {
+        "lower": np.array([100, 100, 100]),
+        "upper": np.array([130, 255, 255]),
+        "draw_color": (255, 0, 0)
+    }
+
 }
 
 
-while True:
+MIN_AREA = 500
 
-    ret, frame = cap.read()
 
-    if not ret:
-        break
+# ---------------- SYSTEM STATE ----------------
+
+waiting_for_arduino = False
+
+serial_buffer = bytearray()
+
+
+# ---------------- SERIAL COMMUNICATION ----------------
+
+def send_data(data):
+
+    arduino.write(f"{data}\n".encode('utf-8'))
+
+    print(f"\nSent: {data}")
+
+
+def read_arduino():
+
+    global serial_buffer
+
+    if arduino.in_waiting:
+
+        serial_buffer.extend(
+            arduino.read(arduino.in_waiting)
+        )
+
+        if b'\n' in serial_buffer:
+
+            response, serial_buffer = serial_buffer.split(b'\n', 1)
+
+            return response.decode('utf-8').strip()
+
+    return None
+
+
+# ---------------- COLOR DETECTION ----------------
+
+def detect_colors(frame):
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Create masks for each color
-    for color, (lower, upper) in colors.items():
+    detected_colors = set()
 
-        lower = np.array(lower)
-        upper = np.array(upper)
+    detections = []
 
-        mask = cv2.inRange(hsv, lower, upper)
+    red_mask = None
 
-        # Combine the two red masks
-        if color == "Red2":
-            red_mask = cv2.bitwise_or(red_mask, mask)
-            continue
+    for color, config in colors.items():
 
-        if color == "Red1":
+        mask = cv2.inRange(
+            hsv,
+            config["lower"],
+            config["upper"]
+        )
+
+        # Combine red masks
+        if color == "red":
+
             red_mask = mask
             continue
+
+        elif color == "red2":
+
+            red_mask = cv2.bitwise_or(red_mask, mask)
+
+            mask = red_mask
+            color_name = "red"
+
+        else:
+
+            color_name = color
 
         # Find contours
         contours, _ = cv2.findContours(
@@ -60,69 +152,109 @@ while True:
             cv2.CHAIN_APPROX_SIMPLE
         )
 
-        # Draw bounding boxes
         for contour in contours:
 
             area = cv2.contourArea(contour)
 
-            if area > 500:
+            if area > MIN_AREA:
 
                 x, y, w, h = cv2.boundingRect(contour)
 
-                cv2.rectangle(
-                    frame,
-                    (x, y),
-                    (x + w, y + h),
-                    (0, 255, 0) if color == "Green" else (255, 0, 0),
-                    2
+                detected_colors.add(color_name)
+
+                detections.append({
+                    "color": color_name,
+                    "area": area,
+                    "box": (x, y, w, h),
+                    "draw_color": config["draw_color"]
+                })
+
+    # Draw bounding boxes
+    for detection in detections:
+
+        x, y, w, h = detection["box"]
+
+        cv2.rectangle(
+            frame,
+            (x, y),
+            (x + w, y + h),
+            detection["draw_color"],
+            2
+        )
+
+        cv2.putText(
+            frame,
+            detection["color"].upper(),
+            (x, y - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            detection["draw_color"],
+            2
+        )
+
+    return detected_colors, detections
+
+
+# ---------------- MAIN LOOP ----------------
+
+while True:
+
+    ret, frame = cap.read()
+
+    if not ret:
+        break
+
+    # Detect colors
+    detected_colors, detections = detect_colors(frame)
+
+
+    # STATE 1: SCANNING
+
+    if not waiting_for_arduino:
+
+        if detection_timer.check() and cooldown_timer.check():
+
+            if detections:
+                largest_detection = max(
+                    detections,
+                    key=lambda item: item["area"]
                 )
 
-                cv2.putText(
-                    frame,
-                    color,
-                    (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255),
-                    2
-                )
+                detected_color = largest_detection["color"]
 
-    # Process red separately
-    contours, _ = cv2.findContours(
-        red_mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
+                send_data(detected_color)
 
-    for contour in contours:
+                waiting_for_arduino = True
 
-        if cv2.contourArea(contour) > 500:
 
-            x, y, w, h = cv2.boundingRect(contour)
+    # STATE 2: WAITING FOR ARDUINO
 
-            cv2.rectangle(
-                frame,
-                (x, y),
-                (x + w, y + h),
-                (0, 0, 255),
-                2
-            )
+    else:
 
-            cv2.putText(
-                frame,
-                "Red",
-                (x, y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 0, 255),
-                2
-            )
+        print("Waiting...", end="\r")
 
-    cv2.imshow("Camera", frame)
+        response = read_arduino()
+
+        if response:
+            print(f"\nArduino responded: {response}")
+
+            cooldown_timer.reset()  # Start a fresh 2-second cooldown
+
+            waiting_for_arduino = False
+
+
+    # CAMERA DISPLAY
+
+    cv2.imshow("Color Detection", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 
+# ---------------- CLEANUP ----------------
+
 cap.release()
+
 cv2.destroyAllWindows()
+
+arduino.close()
