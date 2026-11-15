@@ -20,9 +20,9 @@ This project explores the integration of computer vision, microcontrollers, and 
 ## 2. Project Overview
 
 Note: This implementation does not make use of a robotic arm as stated in the original paper
-The project implements an automated sorting system capable of identifying objects based on their colour and directing a robotic arm to place them in designated locations.
+The project implements an automated sorting system capable of identifying objects based on their colour and directing a servo-actuated sorting diverter. to place them in designated locations.
 
-The system uses computer vision to identify object colours and communicates the classification results to an Arduino microcontroller, which coordinates the conveyor and robotic arm.
+The system uses computer vision to identify object colours and communicates the classification results to an Arduino microcontroller, which then decides the angle the servo-actuated sorting diverter be set at.
 
 The primary objective is to reduce manual intervention in sorting processes while improving efficiency and consistency.
 
@@ -42,9 +42,11 @@ The system consists of three main stages:
 
 ### A. Object Detection and Colour Recognition
 
-A camera captures images of objects moving along the conveyor belt.
+A camera captures images of objects.
 
 OpenCV processes the captured images using HSV colour segmentation to identify the object's colour.
+
+The arduino then sets the servo-actuated sorting diverter at an angle that lets the object fall into its classification.
 
 The paper considers several colour ranges, including red, green, blue, brown, yellow, orange, cyan and black.
 
@@ -55,12 +57,12 @@ A Webcam detects the object.
 
 When an object is detected:
 1. The camera captures for colour identification.
-2. The appropriate path for the colour is opened.
-
+2. Sends the information to the arduino board.
+3. The servo-actuated sorting diverter then tilts the object into its intended bin.
 
 ### C. Robotic Sorting
 
-Gates open to allow colours to fall into their respective bins
+The servo-actuated sorting diverter allows the object to fall into its bin.
 
 | Colour | Sorting Bin |
 |---|---|
@@ -114,15 +116,7 @@ Additional dependencies may be required depending on the implementation.
 
 ## 8. Experimental Results
 
-The original research evaluated the system through several tests:
-
-- Colour identification testing.
-- Gate logic control
-- Overall system integration testing.
-
-The robotic arm achieved 100% coordinate accuracy across five tested positions.
-
-The complete sorting system successfully sorted three different coloured cubes across ten trials, achieving 100% sorting accuracy.
+ [NONE FOR NOW]
 
 ## 9. Implementation and Reproduction
 
